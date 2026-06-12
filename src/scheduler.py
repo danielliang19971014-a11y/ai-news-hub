@@ -9,7 +9,7 @@ class NewsScheduler:
     """定时任务调度器"""
 
     def __init__(self):
-        self.scheduler = BackgroundScheduler()
+        self.scheduler = BackgroundScheduler(timezone=settings.schedule_timezone)
         self.fetcher = NewsFetcher()
         self.notifier = Notifier()
 
@@ -33,7 +33,10 @@ class NewsScheduler:
             text_content = self.notifier.format_news_text(news_list)
 
             # 发送邮件
-            self.notifier.send_email(subject, html_content)
+            if settings.local_email_enabled:
+                self.notifier.send_email(subject, html_content)
+            else:
+                logger.info("本机邮件通道已关闭，邮件由 GitHub Actions 统一发送")
 
             # 发送 macOS 桌面通知
             self.notifier.send_macos_notification(news_list)
@@ -60,11 +63,17 @@ class NewsScheduler:
                 hour=hour,
                 minute=minute,
                 id='daily_news_job',
-                name='每日 AI 资讯推送'
+                name='每日 AI 资讯推送',
+                misfire_grace_time=60,
+                coalesce=True,
+                max_instances=1,
             )
 
             self.scheduler.start()
-            logger.info(f"定时任务已启动，每天 {settings.schedule_time} 执行")
+            logger.info(
+                f"定时任务已启动，每天 {settings.schedule_time} "
+                f"({settings.schedule_timezone}) 执行"
+            )
 
         except Exception as e:
             logger.error(f"启动定时任务失败: {str(e)}")

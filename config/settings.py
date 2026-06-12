@@ -33,6 +33,11 @@ class Settings:
     # 定时配置
     schedule_time: str = os.getenv("SCHEDULE_TIME", "08:00")
 
+    # 明确使用北京时间，并拒绝严重延迟的云端补发
+    schedule_timezone: str = os.getenv("SCHEDULE_TIMEZONE", "Asia/Shanghai")
+    send_window_minutes: int = int(os.getenv("SEND_WINDOW_MINUTES", "60"))
+    local_email_enabled: bool = os.getenv("LOCAL_EMAIL_ENABLED", "False").lower() in ("1", "true", "yes")
+
     # 日志配置
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     log_file: str = "logs/ai-news-hub.log"

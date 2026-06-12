@@ -13,12 +13,39 @@ import sys
 import time
 import argparse
 import signal
+from datetime import datetime, timedelta
+from typing import Optional
+from zoneinfo import ZoneInfo
 from src.scheduler import NewsScheduler
 from src.logger import logger
 from config.settings import settings
 
 
-def run_once(allow_retry: bool = True):
+def is_scheduled_send_allowed(now: Optional[datetime] = None) -> bool:
+    """只允许严重延迟的云端定时任务在北京时间发送窗口内发邮件。"""
+    timezone = ZoneInfo(settings.schedule_timezone)
+    current = now.astimezone(timezone) if now else datetime.now(timezone)
+    hour, minute = map(int, settings.schedule_time.split(':'))
+    window_minutes = max(1, settings.send_window_minutes)
+
+    window_start = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if current < window_start:
+        window_start -= timedelta(days=1)
+    window_end = window_start + timedelta(minutes=window_minutes)
+    allowed = window_start <= current < window_end
+
+    if not allowed:
+        logger.warning(
+            "跳过延迟定时任务：当前北京时间为 %s，允许发送窗口为 %s 起 %s 分钟",
+            current.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            settings.schedule_time,
+            window_minutes,
+        )
+
+    return allowed
+
+
+def run_once(allow_retry: bool = True) -> bool:
     """
     一次性执行资讯推送，完成后退出。
     供 GitHub Actions 等 CI 环境调用。
@@ -26,7 +53,6 @@ def run_once(allow_retry: bool = True):
     """
     from src.news_fetcher import NewsFetcher
     from src.notifier import Notifier
-    from datetime import datetime
 
     fetcher = NewsFetcher()
     notifier = Notifier()
@@ -42,16 +68,16 @@ def run_once(allow_retry: bool = True):
         news_list = fetcher.fetch_all_news()
 
         if news_list:
-            subject = f"🤖 AI 行业每日资讯 - {datetime.now().strftime('%Y-%m-%d')}"
+            today = datetime.now(ZoneInfo(settings.schedule_timezone)).strftime('%Y-%m-%d')
+            subject = f"🤖 AI 行业每日资讯 - {today}"
             html_content = notifier.format_news_html(news_list)
-            text_content = notifier.format_news_text(news_list)
 
             # CI 环境只发邮件，不做桌面通知
             success = notifier.send_email(subject, html_content)
             if success:
                 logger.info("✅ 邮件推送成功（GitHub Actions）")
                 logger.info("=" * 50)
-                return
+                return True
 
             logger.error("邮件发送失败")
             if attempt < max_attempts:
@@ -67,14 +93,11 @@ def run_once(allow_retry: bool = True):
             )
             time.sleep(retry_delay)
         else:
-            # 最后一次尝试仍然失败，发送一个"今天暂无更新"的通知
-            logger.warning("多次重试后仍未获取到资讯，发送空资讯通知")
-            today = datetime.now().strftime('%Y-%m-%d')
-            subject = f"🤖 AI 行业每日资讯 - {today}（暂无更新）"
-            html = f"<p>{today} 的 TLDR 资讯尚未发布，请稍后手动查看。</p>"
-            notifier.send_email(subject, html)
+            logger.warning("多次重试后仍未获取到资讯，交由下一个候选定时任务重试")
+            return False
 
     logger.info("CI 推送任务结束")
+    return False
 
 
 def signal_handler(signum, frame):
@@ -91,12 +114,19 @@ if __name__ == '__main__':
         help='一次性执行推送后退出（用于 GitHub Actions / cron）'
     )
     parser.add_argument(
+        '--scheduled', action='store_true',
+        help='仅在配置的北京时间发送窗口内执行（用于云端定时任务）'
+    )
+    parser.add_argument(
         '--test', action='store_true',
         help='立即执行一次测试发送（调试用）'
     )
     args = parser.parse_args()
 
     # --- CI 一次性模式 ---
+    if args.once and args.scheduled and not is_scheduled_send_allowed():
+        sys.exit(0)
+
     if args.once:
         if not settings.email_sender or not settings.email_recipient:
             logger.error("❌ 邮件配置不完整，请设置环境变量 EMAIL_SENDER 和 EMAIL_RECIPIENT")
@@ -105,8 +135,7 @@ if __name__ == '__main__':
             logger.error("❌ SMTP 凭据不完整，请设置环境变量")
             sys.exit(1)
 
-        run_once()
-        sys.exit(0)
+        sys.exit(0 if run_once() else 1)
 
     # --- 测试模式 ---
     if args.test:

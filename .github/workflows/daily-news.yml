@@ -2,33 +2,67 @@ name: 🤖 AI 行业每日资讯推送
 
 on:
   schedule:
-    # 北京时间每天早上 8:00（UTC 00:00）
-    # 实际设为 00:05 避开整点高峰，也给 TLDR 几
-    # 分钟发布时间窗口
-    - cron: '5 0 * * *'
+    # GitHub 定时任务可能延迟，因此在北京时间 08:00 时段提供后备触发。
+    # 发送窗口和每日缓存保证延迟任务不会晚间补发，也不会重复发邮件。
+    - cron: '0,15,30,45 8 * * *'
+      timezone: 'Asia/Shanghai'
 
   # 允许手动触发（方便测试）
   workflow_dispatch:
 
+concurrency:
+  group: ai-news-daily-email
+  cancel-in-progress: false
+
 jobs:
   send-news:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
+      - name: 检查北京时间发送窗口
+        id: window
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TZ: Asia/Shanghai
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "should_send=true" >> "$GITHUB_OUTPUT"
+            echo "date_key=manual-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          elif [ "$(date +%H)" = "08" ]; then
+            echo "should_send=true" >> "$GITHUB_OUTPUT"
+            echo "date_key=$(date +%F)" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_send=false" >> "$GITHUB_OUTPUT"
+            echo "跳过延迟任务：当前北京时间为 $(date '+%F %T')，不在 08:00-08:59 发送窗口"
+          fi
+
       - name: 检出代码
+        if: steps.window.outputs.should_send == 'true'
         uses: actions/checkout@v4
 
+      - name: 检查今日是否已发送
+        id: sent-cache
+        if: steps.window.outputs.should_send == 'true' && github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .daily-news-state
+          key: ai-news-sent-${{ steps.window.outputs.date_key }}
+          lookup-only: true
+
       - name: 安装 Python
+        if: steps.window.outputs.should_send == 'true' && steps.sent-cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: 安装依赖
+        if: steps.window.outputs.should_send == 'true' && steps.sent-cache.outputs.cache-hit != 'true'
         run: pip install -r requirements.txt
 
       - name: 获取资讯并发送邮件
+        if: steps.window.outputs.should_send == 'true' && steps.sent-cache.outputs.cache-hit != 'true'
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
@@ -40,4 +74,23 @@ jobs:
           SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
           SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
           MACOS_NOTIFICATION_ENABLED: "False"
-        run: python3 main.py --once
+          SCHEDULE_TIME: "08:00"
+          SCHEDULE_TIMEZONE: "Asia/Shanghai"
+          SEND_WINDOW_MINUTES: "60"
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python3 main.py --once --scheduled
+          else
+            python3 main.py --once
+          fi
+
+      - name: 标记今日已发送
+        if: success() && github.event_name == 'schedule' && steps.window.outputs.should_send == 'true' && steps.sent-cache.outputs.cache-hit != 'true'
+        run: mkdir -p .daily-news-state && date -u > ".daily-news-state/${{ steps.window.outputs.date_key }}"
+
+      - name: 保存今日发送标记
+        if: success() && github.event_name == 'schedule' && steps.window.outputs.should_send == 'true' && steps.sent-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .daily-news-state
+          key: ai-news-sent-${{ steps.window.outputs.date_key }}

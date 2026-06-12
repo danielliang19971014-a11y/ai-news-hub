@@ -37,7 +37,7 @@ ai-news-hub/
 
 ### 系统要求
 
-- Python 3.8+
+- Python 3.9+
 - macOS / Linux / Windows
 
 ### 1. 克隆并安装
@@ -192,6 +192,13 @@ SERVERCHAN_KEY=
 # 推送时间（24小时制）
 SCHEDULE_TIME=08:00
 
+# 调度时区与发送窗口
+SCHEDULE_TIMEZONE=Asia/Shanghai
+SEND_WINDOW_MINUTES=60
+
+# 本机常驻任务是否同时发邮件（建议关闭，避免和 GitHub Actions 重复）
+LOCAL_EMAIL_ENABLED=False
+
 # 日志级别
 LOG_LEVEL=INFO
 ```
@@ -206,6 +213,9 @@ LOG_LEVEL=INFO
 | `SMTP_HOST` | SMTP 服务器 | `smtp.qq.com` |
 | `SMTP_PORT` | SMTP 端口 | `465` |
 | `SCHEDULE_TIME` | 每日推送时间 | `08:00` |
+| `SCHEDULE_TIMEZONE` | 调度时区 | `Asia/Shanghai` |
+| `SEND_WINDOW_MINUTES` | 云端延迟任务允许发送的分钟数 | `60` |
+| `LOCAL_EMAIL_ENABLED` | 本机定时任务是否发邮件 | `False` |
 | `SERVERCHAN_KEY` | Server 酱密钥 | - |
 | `MACOS_NOTIFICATION_ENABLED` | 桌面通知开关 | `True` |
 | `RUNDOWN_ENABLED` | The Rundown 源 | `False` |

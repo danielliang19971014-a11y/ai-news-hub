@@ -264,5 +264,5 @@ class Notifier:
                 text += f"   {item.get('description', '')}\n"
                 text += f"   {item.get('url', '')}\n"
 
-        text += f"\n\n---\nAI 行业资讯聚合工具 | 每天 08:00 准时推送"
+        text += f"\n\n---\nAI 行业资讯聚合工具 | 每天北京时间 08:00 时段推送"
         return text
